@@ -827,6 +827,118 @@ impl AudioInputProvider for ReconnectingMonitorProvider {
     }
 }
 
+struct MixedRouteFailureProvider {
+    microphone_opens: Arc<AtomicUsize>,
+    desktop_opens: Arc<AtomicUsize>,
+}
+
+impl AudioInputProvider for MixedRouteFailureProvider {
+    fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+        Ok(vec![
+            AudioDeviceInfo::new("mixed-input", "Mixed microphone", AudioDeviceKind::Input)?,
+            AudioDeviceInfo::new("mixed-output", "Mixed speakers", AudioDeviceKind::Output)?,
+        ])
+    }
+
+    fn open_input(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        if device_id != "mixed-input" {
+            return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                device_id.to_owned(),
+            ));
+        }
+        let attempt = self.microphone_opens.fetch_add(1, Ordering::AcqRel);
+        if attempt == 0 {
+            Ok(Box::new(FailingAudioInput {
+                format,
+                inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+                healthy_blocks: 1,
+            }))
+        } else {
+            SimulatedAudioProvider::new().open_input("test-audio", format)
+        }
+    }
+
+    fn open_loopback(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        if device_id != "mixed-output" {
+            return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                device_id.to_owned(),
+            ));
+        }
+        let attempt = self.desktop_opens.fetch_add(1, Ordering::AcqRel);
+        if attempt == 0 {
+            Ok(Box::new(FailingAudioInput {
+                format,
+                inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+                healthy_blocks: 1,
+            }))
+        } else {
+            Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                "desktop unplugged".to_owned(),
+            ))
+        }
+    }
+}
+
+#[test]
+fn recovering_one_audio_route_preserves_the_other_route_diagnostic() {
+    let microphone_opens = Arc::new(AtomicUsize::new(0));
+    let desktop_opens = Arc::new(AtomicUsize::new(0));
+    let config = EngineConfig::default()
+        .with_audio_provider(Arc::new(MixedRouteFailureProvider {
+            microphone_opens: Arc::clone(&microphone_opens),
+            desktop_opens: Arc::clone(&desktop_opens),
+        }))
+        .with_audio_input_id("mixed-input")
+        .with_desktop_audio_id("mixed-output");
+    let mut engine = EngineSession::new(project(), config).expect("engine");
+
+    engine
+        .drain_audio_until(Timestamp::ZERO)
+        .expect("initial audio block");
+    engine
+        .drain_audio_until(Timestamp::from_millis(100))
+        .expect("audio failure block");
+    let failed = engine.snapshot();
+    let failed_error = failed.last_error.expect("both route failures are visible");
+    assert!(failed_error.contains("microphone"));
+    assert!(failed_error.contains("desktop audio"));
+    assert!(failed_error.contains("unplugged"));
+
+    let mut recovered = false;
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(200 + attempt * 10))
+            .expect("audio while recovering");
+        let snapshot = engine.snapshot();
+        if !snapshot.audio_fallback
+            && snapshot.audio_active_device_id.as_deref() == Some("mixed-input")
+        {
+            recovered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    assert!(recovered, "microphone route did not recover");
+    let recovered = engine.snapshot();
+    let error = recovered
+        .last_error
+        .expect("desktop route failure remains visible");
+    assert!(!error.contains("microphone:"));
+    assert!(error.contains("desktop audio:"));
+    assert!(error.contains("desktop unplugged"));
+    assert!(microphone_opens.load(Ordering::Acquire) >= 2);
+    assert!(desktop_opens.load(Ordering::Acquire) >= 2);
+}
+
 #[test]
 fn falling_back_after_a_device_failure_keeps_the_audio_timeline_continuous() {
     // The timeline, not the device, issues block timestamps, and the

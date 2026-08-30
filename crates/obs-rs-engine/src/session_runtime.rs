@@ -10,6 +10,30 @@ use super::{
 };
 
 impl EngineSession {
+    pub(super) fn audio_route_error(&self) -> Option<String> {
+        match (
+            self.microphone_route_error.as_deref(),
+            self.desktop_audio_route_error.as_deref(),
+        ) {
+            (Some(microphone), Some(desktop)) => Some(format!(
+                "microphone: {microphone}; desktop audio: {desktop}"
+            )),
+            (Some(microphone), None) => Some(format!("microphone: {microphone}")),
+            (None, Some(desktop)) => Some(format!("desktop audio: {desktop}")),
+            (None, None) => None,
+        }
+    }
+
+    /// Updates the UI-facing error only when it still represents the previous
+    /// audio-route diagnostic. Output and control-plane failures are allowed
+    /// to remain visible while an audio endpoint recovers in the background.
+    pub(super) fn refresh_audio_route_error(&mut self, previous: Option<String>) {
+        let current = self.audio_route_error();
+        if self.last_error == previous {
+            self.last_error = current;
+        }
+    }
+
     pub(super) fn render_scene_at(
         &mut self,
         scene: &str,
@@ -35,6 +59,7 @@ impl EngineSession {
             if result.sequence != self.audio_route_request_sequence {
                 continue;
             }
+            let previous_audio_error = self.audio_route_error();
             match result.microphone {
                 AudioRouteUpdate::Opened(route) => {
                     self.audio_input.stop();
@@ -43,11 +68,11 @@ impl EngineSession {
                     self.audio_active_device_id = Some(route.device_id);
                     self.audio_fallback = false;
                     self.audio_input_delay.reset();
-                    self.last_error = None;
+                    self.microphone_route_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
                     if self.config.audio_input_id.is_some() {
-                        self.last_error = Some(reason);
+                        self.microphone_route_error = Some(reason);
                     }
                 }
                 AudioRouteUpdate::Unchanged => {}
@@ -61,15 +86,16 @@ impl EngineSession {
                     self.desktop_audio_backend = route.device_name;
                     self.desktop_audio_active_device_id = Some(route.device_id);
                     self.desktop_audio_delay.reset();
-                    self.last_error = None;
+                    self.desktop_audio_route_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
                     if self.config.desktop_audio_id.is_some() {
-                        self.last_error = Some(reason);
+                        self.desktop_audio_route_error = Some(reason);
                     }
                 }
                 AudioRouteUpdate::Unchanged => {}
             }
+            self.refresh_audio_route_error(previous_audio_error);
         }
 
         // Keep automatic routes under the worker continuously so default-device
@@ -125,7 +151,9 @@ impl EngineSession {
                 self.audio_active_device_id = None;
                 self.audio_fallback = true;
                 self.audio_backend = format!("simulated fallback ({error})");
-                self.last_error = Some(error.to_string());
+                let previous_audio_error = self.audio_route_error();
+                self.microphone_route_error = Some(error.to_string());
+                self.refresh_audio_route_error(previous_audio_error);
                 self.audio_input = SimulatedAudioProvider::new()
                     .open_input("test-audio", self.config.audio_format)?;
                 self.audio_route_refresh_at = Timestamp::ZERO;
@@ -161,7 +189,9 @@ impl EngineSession {
                     self.desktop_audio_active_device_id = None;
                     self.desktop_audio_backend = format!("unavailable ({error})");
                     self.audio_route_refresh_at = Timestamp::ZERO;
-                    self.last_error = Some(error.to_string());
+                    let previous_audio_error = self.audio_route_error();
+                    self.desktop_audio_route_error = Some(error.to_string());
+                    self.refresh_audio_route_error(previous_audio_error);
                 }
             }
         }

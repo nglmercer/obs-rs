@@ -135,6 +135,9 @@ pub struct EngineSession {
     audio_fallback: bool,
     /// Runtime identity of the device currently feeding the microphone.
     audio_active_device_id: Option<String>,
+    /// The most recent microphone-route failure, retained independently from
+    /// the desktop route so recovery of one endpoint cannot hide the other.
+    microphone_route_error: Option<String>,
     /// Bounded delay line for the microphone channel.
     audio_input_delay: AudioDelayLine,
     /// Absent when no playback monitor could be opened, which keeps the desktop
@@ -143,6 +146,9 @@ pub struct EngineSession {
     desktop_audio_backend: String,
     /// Runtime identity of the playback route currently feeding desktop audio.
     desktop_audio_active_device_id: Option<String>,
+    /// The most recent desktop-route failure, retained independently from the
+    /// microphone route so recovery of one endpoint cannot hide the other.
+    desktop_audio_route_error: Option<String>,
     /// Bounded delay line for the desktop channel.
     desktop_audio_delay: AudioDelayLine,
     /// Discovers and opens audio-route replacements off the audio tick.
@@ -312,10 +318,12 @@ impl EngineSession {
             audio_backend,
             audio_fallback,
             audio_active_device_id,
+            microphone_route_error: None,
             audio_input_delay,
             desktop_audio,
             desktop_audio_backend,
             desktop_audio_active_device_id,
+            desktop_audio_route_error: None,
             desktop_audio_delay,
             audio_route_worker,
             audio_route_refresh_at: Timestamp::ZERO,
@@ -382,6 +390,8 @@ impl EngineSession {
         self.stats.av_sync = AvSyncMetrics::default();
         self.audio_input_delay.reset();
         self.desktop_audio_delay.reset();
+        self.microphone_route_error = None;
+        self.desktop_audio_route_error = None;
         self.next_audio_deadline = None;
         self.render_timestamp = Timestamp::ZERO;
         self.video_encoder = Box::new(RleVideoEncoder::new(format));

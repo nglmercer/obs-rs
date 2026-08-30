@@ -397,6 +397,8 @@ impl EngineSession {
         self.config.audio_format = audio_format;
         self.next_audio_deadline = None;
         self.invalidate_audio_route_requests();
+        self.microphone_route_error = None;
+        self.desktop_audio_route_error = None;
         self.last_error = None;
         Ok(())
     }
@@ -426,7 +428,9 @@ impl EngineSession {
         self.config.audio_input_id = device_id;
         self.next_audio_deadline = None;
         self.invalidate_audio_route_requests();
-        self.last_error = None;
+        let previous_audio_error = self.audio_route_error();
+        self.microphone_route_error = None;
+        self.refresh_audio_route_error(previous_audio_error);
     }
 
     /// Switches the playback monitor feeding the desktop channel.
@@ -457,5 +461,8 @@ impl EngineSession {
         self.config.desktop_audio_id = device_id;
         self.next_audio_deadline = None;
         self.invalidate_audio_route_requests();
+        let previous_audio_error = self.audio_route_error();
+        self.desktop_audio_route_error = None;
+        self.refresh_audio_route_error(previous_audio_error);
     }
 }
