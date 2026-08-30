@@ -215,6 +215,9 @@ pub struct EngineSnapshot {
     pub filter_diagnostics: Vec<String>,
     pub stream_metrics: Option<StreamMetrics>,
     pub production_stream_metrics: Option<ProductionStreamMetrics>,
+    /// Latest bounded native production-output error while it is recovering
+    /// or has entered a terminal failure state.
+    pub production_stream_error: Option<String>,
     pub stream_queued_bytes: usize,
     pub last_error: Option<String>,
     pub stats: EngineStats,

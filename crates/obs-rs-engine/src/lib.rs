@@ -460,6 +460,10 @@ impl EngineSession {
                 .streaming
                 .as_ref()
                 .and_then(StreamOutput::production_metrics),
+            production_stream_error: self
+                .streaming
+                .as_ref()
+                .and_then(StreamOutput::production_error),
             stream_queued_bytes: self
                 .streaming
                 .as_ref()

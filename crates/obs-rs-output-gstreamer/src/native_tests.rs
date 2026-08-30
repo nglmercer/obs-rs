@@ -879,6 +879,39 @@ fn native_reconnect_build_failures_use_the_remaining_retry_budget() {
 }
 
 #[test]
+fn native_recovery_error_is_bounded_and_cleared_after_reconnect() {
+    let plan = plan(OutputProfile::rtmp_h264_aac());
+    let destination = ProductionDestination::Rtmp {
+        endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+    };
+    let video = VideoFormat::new(
+        16,
+        16,
+        obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+    )
+    .expect("video format");
+    let audio = AudioFormat::new(48_000, 2).expect("audio format");
+    let mut session = GStreamerOutputSession::start_with_reconnect_policy(
+        &plan,
+        &destination,
+        video,
+        audio,
+        ReconnectPolicy::immediate(1),
+    )
+    .expect("live session");
+
+    session.record_error(&GStreamerError::Native("x".repeat(2_000)));
+    let error = session.last_error().expect("recovery error");
+    assert_eq!(error.chars().count(), 1_025);
+    assert!(error.ends_with('…'));
+
+    session.state = NativeOutputState::Retrying;
+    session.next_reconnect_at = Some(Instant::now());
+    session.poll_health().expect("reconnect clears old error");
+    assert_eq!(session.last_error(), None);
+}
+
+#[test]
 fn native_health_poll_services_a_pending_reconnect_deadline() {
     let plan = plan(OutputProfile::rtmp_h264_aac());
     let destination = ProductionDestination::Rtmp {

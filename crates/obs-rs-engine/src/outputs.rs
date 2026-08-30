@@ -411,6 +411,15 @@ impl StreamOutput {
         None
     }
 
+    #[cfg_attr(not(feature = "production-gstreamer"), allow(clippy::unused_self))]
+    pub(super) fn production_error(&self) -> Option<String> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production(stream) = self {
+            return stream.last_error().map(ToOwned::to_owned);
+        }
+        None
+    }
+
     #[cfg_attr(
         not(feature = "production-gstreamer"),
         allow(

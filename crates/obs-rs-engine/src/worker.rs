@@ -245,6 +245,7 @@ impl EngineWorker {
                     filter_diagnostics: Vec::new(),
                     stream_metrics: None,
                     production_stream_metrics: None,
+                    production_stream_error: None,
                     stream_queued_bytes: 0,
                     last_error: Some("engine worker status lock poisoned".to_owned()),
                     stats: EngineStats::default(),

@@ -44,7 +44,7 @@ Windows features passed.
 | Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. The Windows probe now saves and loads a real project file, then captures the IDs loaded from disk. Reload it and capture the same targets on hardware. |
 | Monitor/window hotplug | ✅ | ◐ | ◐ | ☐ | Discovery can be refreshed and capture loss triggers bounded reopen attempts; no hardware hotplug acceptance is recorded. |
 | Audio device hotplug | ✅ | ✅ | ◐ | ☐ | WASAPI discovery snapshots, default-route refresh, and bounded engine reconnect logic exist; the Windows probe now checks stable IDs/default metadata. Change default devices and unplug the active route while recording. |
-| Diagnostics | ✅ | — | ◐ | ☐ | Windows version, GPU backend/adapter, and helper version are included in the diagnostics path. Export and inspect a packaged diagnostic bundle. |
+| Diagnostics | ✅ | — | ◐ | ☐ | Windows version, GPU backend/adapter, helper version, monitor-worker errors, and native production-output recovery errors are included in the diagnostics path. Export and inspect a packaged diagnostic bundle. |
 | Updater | ✅ | — | ◐ | ☐ | Windows-safe atomic publish logic exists. Exercise update, rollback/recovery, and locked-file behavior on a clean installation. |
 | Packaging | ✅ | — | ◐ | ☐ | The ZIP contains the GUI, app, check binary, helper, manifests, and checksums. Install/run it on a clean Windows 10/11 machine. |
 
@@ -127,6 +127,10 @@ only scaffolded:
   allow-listed GStreamer probe; the Output page and exported diagnostics now
   distinguish an uncompiled adapter, a missing runtime, an incomplete plugin
   installation, and a ready production backend;
+- native production sessions retain one bounded pipeline failure while a live
+  output is reconnecting or terminal, expose it through the engine snapshot,
+  and clear it after a successful reconnect so operators can distinguish a
+  transient outage from a healthy recovered stream;
 - native capture retries use media-time schedules, the helper publishes only
   its newest complete frame, direct helper-process polling surfaces crashes
   immediately, bounded shutdown failures remain retryable, and live window

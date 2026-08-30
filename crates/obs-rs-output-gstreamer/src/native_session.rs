@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fmt, fs,
     mem::size_of,
     path::PathBuf,
     time::{Duration, Instant},
@@ -26,6 +26,7 @@ use super::{
 };
 
 const LOCAL_PIPELINE_START_TIMEOUT: gst::ClockTime = gst::ClockTime::from_seconds(5);
+const MAX_SESSION_ERROR_CHARS: usize = 1_024;
 
 /// Timestamp, queue/drop, reconnect, drift, keyframe, and submit timing data.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -110,6 +111,7 @@ pub struct GStreamerOutputSession {
     video_format: VideoFormat,
     audio_format: AudioFormat,
     video_pixel_format: PixelFormat,
+    last_error: Option<String>,
 }
 
 impl GStreamerOutputSession {
@@ -238,6 +240,7 @@ impl GStreamerOutputSession {
             video_format,
             audio_format,
             video_pixel_format: PixelFormat::Rgba8,
+            last_error: None,
         })
     }
 
@@ -249,6 +252,17 @@ impl GStreamerOutputSession {
     #[must_use]
     pub const fn telemetry(&self) -> OutputSessionTelemetry {
         self.telemetry
+    }
+
+    /// Returns the latest bounded native pipeline failure, if one occurred.
+    ///
+    /// Live sessions retain a transient failure while they are retrying so
+    /// the GUI and acceptance harness can explain an outage. A successful
+    /// reconnect clears it; terminal failures remain available for support
+    /// diagnostics.
+    #[must_use]
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
     }
 
     /// Returns the total bytes published by the last successful local close.
@@ -264,7 +278,10 @@ impl GStreamerOutputSession {
     /// Rejects closed sessions, timestamp regression, or downstream failure.
     pub fn push_video(&mut self, frame: VideoFrame) -> Result<(), GStreamerError> {
         if self.video_pixel_format != PixelFormat::Rgba8 {
-            self.set_video_caps(PixelFormat::Rgba8)?;
+            if let Err(error) = self.set_video_caps(PixelFormat::Rgba8) {
+                self.record_error(&error);
+                return Err(error);
+            }
         }
         let timestamp = frame.timestamp();
         self.push_video_bytes(timestamp, frame.into_pixels())
@@ -282,12 +299,17 @@ impl GStreamerOutputSession {
     /// invalid caps, or downstream failure.
     pub fn push_raw_video(&mut self, frame: RawVideoFrame) -> Result<(), GStreamerError> {
         if frame.format() != self.video_format {
-            return Err(GStreamerError::Native(
+            let error = GStreamerError::Native(
                 "raw video format does not match the output canvas".to_owned(),
-            ));
+            );
+            self.record_error(&error);
+            return Err(error);
         }
         if self.video_pixel_format != frame.pixel_format() {
-            self.set_video_caps(frame.pixel_format())?;
+            if let Err(error) = self.set_video_caps(frame.pixel_format()) {
+                self.record_error(&error);
+                return Err(error);
+            }
         }
         let timestamp = frame.timestamp();
         self.push_video_bytes(timestamp, frame.into_bytes())
@@ -314,15 +336,18 @@ impl GStreamerOutputSession {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
             return Ok(());
         }
-        self.ensure_media_ready()?;
+        if let Err(error) = self.ensure_media_ready() {
+            self.record_error(&error);
+            return Err(error);
+        }
         if self
             .telemetry
             .last_video_timestamp
             .is_some_and(|old| timestamp < old)
         {
-            return Err(GStreamerError::Native(
-                "video timestamp regressed".to_owned(),
-            ));
+            let error = GStreamerError::Native("video timestamp regressed".to_owned());
+            self.record_error(&error);
+            return Err(error);
         }
         let started = Instant::now();
         let mut buffer = gst::Buffer::from_mut_slice(bytes);
@@ -333,9 +358,9 @@ impl GStreamerOutputSession {
         writable.set_duration(self.video_duration);
         if self.video.push_buffer(buffer).is_err() {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
-            return Err(GStreamerError::Native(
-                "video appsrc rejected a frame".to_owned(),
-            ));
+            let error = GStreamerError::Native("video appsrc rejected a frame".to_owned());
+            self.record_error(&error);
+            return Err(error);
         }
         self.telemetry.video_submitted = self.telemetry.video_submitted.saturating_add(1);
         self.telemetry.last_video_timestamp = Some(timestamp);
@@ -357,16 +382,19 @@ impl GStreamerOutputSession {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
             return Ok(());
         }
-        self.ensure_media_ready()?;
+        if let Err(error) = self.ensure_media_ready() {
+            self.record_error(&error);
+            return Err(error);
+        }
         let timestamp = buffer.timestamp();
         if self
             .telemetry
             .last_audio_timestamp
             .is_some_and(|old| timestamp < old)
         {
-            return Err(GStreamerError::Native(
-                "audio timestamp regressed".to_owned(),
-            ));
+            let error = GStreamerError::Native("audio timestamp regressed".to_owned());
+            self.record_error(&error);
+            return Err(error);
         }
         let started = Instant::now();
         let duration = gst::ClockTime::from_nseconds(
@@ -388,9 +416,9 @@ impl GStreamerOutputSession {
         writable.set_duration(duration);
         if self.audio.push_buffer(gst_buffer).is_err() {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
-            return Err(GStreamerError::Native(
-                "audio appsrc rejected a buffer".to_owned(),
-            ));
+            let error = GStreamerError::Native("audio appsrc rejected a buffer".to_owned());
+            self.record_error(&error);
+            return Err(error);
         }
         self.telemetry.audio_submitted = self.telemetry.audio_submitted.saturating_add(1);
         self.telemetry.last_audio_timestamp = Some(timestamp);
@@ -412,7 +440,10 @@ impl GStreamerOutputSession {
         // signal before sending the intentional EOS below; otherwise a
         // truncated recording could be mistaken for a clean finalization.
         self.poll_health()?;
-        self.ensure_open()?;
+        if let Err(error) = self.ensure_open() {
+            self.record_error(&error);
+            return Err(error);
+        }
         let _ = self.video.end_of_stream();
         let _ = self.audio.end_of_stream();
         // Live muxers do not publish a local index and remote sinks may never
@@ -421,16 +452,18 @@ impl GStreamerOutputSession {
         if !is_local_recording_transport(self.transport) {
             if let Err(error) = self.pipeline.set_state(gst::State::Null) {
                 self.state = NativeOutputState::Failed;
-                return Err(native_error(error));
+                let error = native_error(error);
+                self.record_error(&error);
+                return Err(error);
             }
             self.state = NativeOutputState::Closed;
             return Ok(());
         }
         let Some(bus) = self.pipeline.bus() else {
             self.state = NativeOutputState::Failed;
-            return Err(GStreamerError::Native(
-                "recording pipeline has no message bus".to_owned(),
-            ));
+            let error = GStreamerError::Native("recording pipeline has no message bus".to_owned());
+            self.record_error(&error);
+            return Err(error);
         };
         let message = bus.timed_pop_filtered(
             gst::ClockTime::from_seconds(10),
@@ -440,19 +473,25 @@ impl GStreamerOutputSession {
             Some(gst::MessageView::Eos(_)) => {}
             Some(gst::MessageView::Error(error)) => {
                 self.state = NativeOutputState::Failed;
-                return Err(GStreamerError::Native(native_pipeline_error(
+                let error = GStreamerError::Native(native_pipeline_error(
                     "recording pipeline reported an asynchronous error",
                     error,
-                )));
+                ));
+                self.record_error(&error);
+                return Err(error);
             }
             _ => {
                 self.state = NativeOutputState::Failed;
-                return Err(GStreamerError::Native("pipeline EOS timed out".to_owned()));
+                let error = GStreamerError::Native("pipeline EOS timed out".to_owned());
+                self.record_error(&error);
+                return Err(error);
             }
         }
         if let Err(error) = self.pipeline.set_state(gst::State::Null) {
             self.state = NativeOutputState::Failed;
-            return Err(native_error(error));
+            let error = native_error(error);
+            self.record_error(&error);
+            return Err(error);
         }
         let committed_bytes = if let Some(final_path) = &self.remux_final_path {
             let temp = self.temp_path.as_ref().ok_or_else(|| {
@@ -485,6 +524,7 @@ impl GStreamerOutputSession {
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
         self.refresh_queue_levels();
         if let Some(failure) = take_pipeline_failure(&self.pipeline) {
+            self.record_error(&failure);
             self.state = NativeOutputState::Lost;
             if is_local_recording_transport(self.transport) {
                 self.state = NativeOutputState::Failed;
@@ -529,9 +569,9 @@ impl GStreamerOutputSession {
         }
         if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
             self.state = NativeOutputState::Failed;
-            return Err(GStreamerError::Native(
-                "live output reconnect limit reached".to_owned(),
-            ));
+            let error = GStreamerError::Native("live output reconnect limit reached".to_owned());
+            self.record_error(&error);
+            return Err(error);
         }
         if let Some(deadline) = self.next_reconnect_at {
             if now < deadline {
@@ -545,7 +585,9 @@ impl GStreamerOutputSession {
         self.state = NativeOutputState::Retrying;
         if let Err(error) = self.pipeline.set_state(gst::State::Null) {
             self.state = NativeOutputState::Failed;
-            return Err(native_error(error));
+            let error = native_error(error);
+            self.record_error(&error);
+            return Err(error);
         }
         let (pipeline, video, audio) = match self.build_live_pipeline() {
             Ok(pipeline) => pipeline,
@@ -562,6 +604,7 @@ impl GStreamerOutputSession {
         self.video_pixel_format = PixelFormat::Rgba8;
         self.next_reconnect_at = None;
         self.telemetry.reconnects = self.telemetry.reconnects.saturating_add(1);
+        self.clear_error();
         self.state = NativeOutputState::Ready;
         Ok(ReconnectOutcome::Reconnected)
     }
@@ -571,6 +614,7 @@ impl GStreamerOutputSession {
         now: Instant,
         error: GStreamerError,
     ) -> Result<ReconnectOutcome, GStreamerError> {
+        self.record_error(&error);
         if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
             self.state = NativeOutputState::Failed;
             return Err(error);
@@ -668,11 +712,32 @@ impl GStreamerOutputSession {
         self.telemetry.audio_queue_bytes = self.audio.property::<u64>("current-level-bytes");
     }
 
+    fn record_error(&mut self, error: &GStreamerError) {
+        self.last_error = Some(bounded_session_error(error));
+    }
+
+    fn clear_error(&mut self) {
+        self.last_error = None;
+    }
+
     pub(super) fn schedule_reconnect(&mut self, now: Instant) {
         self.next_reconnect_at = now.checked_add(
             self.reconnect_policy
                 .delay_for_attempt(self.reconnect_attempts),
         );
+    }
+}
+
+fn bounded_session_error(error: impl fmt::Display) -> String {
+    let mut characters = error.to_string().chars();
+    let bounded = characters
+        .by_ref()
+        .take(MAX_SESSION_ERROR_CHARS)
+        .collect::<String>();
+    if characters.next().is_some() {
+        format!("{bounded}…")
+    } else {
+        bounded
     }
 }
 
