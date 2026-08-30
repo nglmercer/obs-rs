@@ -213,7 +213,7 @@ impl AsyncCaptureDevice {
             return Err(CaptureError::AlreadyRunning);
         }
         self.cancelled.cancel();
-        self.device = None;
+        self.stop_device();
         self.cancelled = CaptureCancellation::new();
         self.receiver = spawn_open(
             Arc::clone(&self.opener),
@@ -274,7 +274,7 @@ impl AsyncCaptureDevice {
     }
 
     fn fail<T>(&mut self, error: CaptureError) -> Result<T, CaptureError> {
-        self.device = None;
+        self.stop_device();
         self.state = if is_permission_denial(&error) {
             CaptureLifecycleState::Denied
         } else {
@@ -282,6 +282,19 @@ impl AsyncCaptureDevice {
         };
         self.last_error = Some(error.clone());
         Err(error)
+    }
+
+    /// Runs the device-specific teardown hook before releasing ownership.
+    ///
+    /// `VideoCaptureDevice` deliberately exposes `stop()` instead of relying
+    /// on `Drop`: native implementations may own a child process, camera
+    /// session, or driver stream whose resources are not released by merely
+    /// dropping the trait object. Keeping this in one helper makes failure,
+    /// retry, and normal wrapper destruction follow the same lifecycle rule.
+    fn stop_device(&mut self) {
+        if let Some(mut device) = self.device.take() {
+            device.stop();
+        }
     }
 }
 
@@ -323,12 +336,92 @@ const fn is_permission_denial(error: &CaptureError) -> bool {
 impl Drop for AsyncCaptureDevice {
     fn drop(&mut self) {
         self.cancelled.cancel();
+        self.stop_device();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{atomic::AtomicBool, Arc};
+
     use super::*;
+    use crate::{CaptureDeviceInfo, CaptureKind};
+
+    struct StopAwareDevice {
+        info: CaptureDeviceInfo,
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl VideoCaptureDevice for StopAwareDevice {
+        fn info(&self) -> &CaptureDeviceInfo {
+            &self.info
+        }
+
+        fn start(&mut self, _format: VideoFormat) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn stop(&mut self) {
+            self.stopped.store(true, Ordering::Release);
+        }
+
+        fn is_running(&self) -> bool {
+            !self.stopped.load(Ordering::Acquire)
+        }
+
+        fn next_frame(
+            &mut self,
+            _timestamp: Timestamp,
+        ) -> Result<Option<VideoFrame>, CaptureError> {
+            Err(CaptureError::NotRunning)
+        }
+    }
+
+    fn stop_aware_device(stopped: Arc<AtomicBool>) -> StopAwareDevice {
+        StopAwareDevice {
+            info: CaptureDeviceInfo::new(
+                "lifecycle-device",
+                "Lifecycle device",
+                CaptureKind::Camera,
+            )
+            .expect("device info"),
+            stopped,
+        }
+    }
+
+    fn format() -> VideoFormat {
+        VideoFormat::new(64, 32, obs_rs_media::FrameRate::new(30, 1).expect("rate"))
+            .expect("format")
+    }
+
+    #[test]
+    fn a_failed_device_is_stopped_before_the_wrapper_reports_loss() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let device = stop_aware_device(Arc::clone(&stopped));
+        let mut capture = AsyncCaptureDevice::ready(format(), Box::new(device), |_cancelled| {
+            Err(CaptureError::NotRunning)
+        })
+        .expect("ready capture");
+
+        assert!(matches!(
+            capture.poll_frame(Timestamp::ZERO),
+            Err(CaptureError::NotRunning)
+        ));
+        assert!(stopped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn dropping_a_ready_device_runs_its_explicit_stop_hook() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let device = stop_aware_device(Arc::clone(&stopped));
+        let capture = AsyncCaptureDevice::ready(format(), Box::new(device), |_cancelled| {
+            Err(CaptureError::NotRunning)
+        })
+        .expect("ready capture");
+
+        drop(capture);
+        assert!(stopped.load(Ordering::Acquire));
+    }
 
     #[test]
     fn retry_schedule_uses_media_time_and_starts_due() {
