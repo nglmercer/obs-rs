@@ -288,6 +288,10 @@ fn run_output_worker(
                 continue;
             }
         };
+        // A successful reopen supersedes the previous endpoint failure. Keep
+        // diagnostics about the current worker state rather than making a
+        // recovered WASAPI sink look permanently broken to the GUI.
+        clear_worker_error(&last_error);
         state.store(STATE_STARTING, Ordering::Release);
 
         loop {
@@ -454,6 +458,12 @@ fn fail_worker<E: fmt::Display>(state: &AtomicU8, last_error: &Mutex<Option<Stri
         *last_error = Some(bounded_error(error));
     }
     state.store(STATE_FAILED, Ordering::Release);
+}
+
+fn clear_worker_error(last_error: &Mutex<Option<String>>) {
+    if let Ok(mut last_error) = last_error.lock() {
+        *last_error = None;
+    }
 }
 
 fn bounded_error(error: impl fmt::Display) -> String {

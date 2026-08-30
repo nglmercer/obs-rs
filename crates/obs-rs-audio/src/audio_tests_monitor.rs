@@ -417,6 +417,7 @@ fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.state, AudioOutputWorkerState::Running);
     assert_eq!(snapshot.reconnects, 1);
+    assert_eq!(snapshot.last_error, None);
     drop(worker);
     assert!(wait_until(Duration::from_secs(1), || {
         matches!(handle.snapshot().state, AudioOutputWorkerState::Stopped)
